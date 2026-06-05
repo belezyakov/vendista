@@ -8,6 +8,7 @@ import binascii
 from dataclasses import dataclass
 from enum import Enum
 import libscrc
+from typing import List, Tuple
 
 logger = logging.getLogger("vendista")
 
@@ -108,7 +109,13 @@ class Vendista(object):
     header_format = struct.Struct('<HH')
     packet_read_card = struct.Struct('<LHLB')
     packet_show_qr = struct.Struct('<pp')
-    packet_vend_request = struct.Struct('<HHB')
+    # packet_vend_report = struct.Struct('<BHBB')
+    # NOTE: not working format above for 0x0E command, 
+    # use VendReportMulti format instead even for single product
+    packet_vend_report_cashless = struct.Struct('<B')
+    packet_vend_report_product = struct.Struct('<IH')
+    packet_vend_report_gsm_flag = struct.Struct('<B')
+    packet_vend_request = struct.Struct('<IHB')
     packet_fill_screen = struct.Struct('<H')
     packet_write_line = struct.Struct('<HHBHHp')
     packet_card_read_result = struct.Struct('<B8s')
@@ -350,6 +357,9 @@ class Vendista(object):
         result = self.request(Type.SHOW_PICTURE, id.to_bytes(1))
         return result == Type.ACK
 
+    def if_connected_to_server(self):
+        return self.connect_state == ConnectState.SERVER_CONNECTED
+
     def get_connect_state(self):
         result = self.request(Type.CONNECT_STATE_REQUEST)
         return result == Type.ACK
@@ -373,6 +383,15 @@ class Vendista(object):
         if self.pending_payment is not None:
             self.pending_payment["time"] = time()
             self.pending_payment["active"] = False
+        return result == Type.ACK
+
+    def vend_report(self, products_list: List[Tuple[int, int]]):
+        logger.info(f"Vend report, {products_list}")
+        body = self.packet_vend_report_cashless.pack(2) # Cashless
+        for product_number, product_price in products_list:
+            body += self.packet_vend_report_product.pack(product_price, product_number)
+        body += self.packet_vend_report_gsm_flag.pack(1) # Use terminal gsm
+        result = self.request(Type.VEND_REPORT, body)
         return result == Type.ACK
 
     def vend_request(self, sum):
